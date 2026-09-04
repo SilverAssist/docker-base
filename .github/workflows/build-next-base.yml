@@ -50,9 +50,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # CodeBuild pulls from ECR, not GHCR: same region as the build, no
-      # internet egress and no third-party rate limit in the hot path.
+      # ECR is optional. Until the OIDC role exists, releases publish to GHCR
+      # alone — public GHCR images need no auth and have no pull rate limit, so
+      # consumers can already pull them. Setting AWS_ECR_ROLE_ARN turns the
+      # in-region mirror on with no other change.
       - name: Configure AWS credentials
+        id: aws
+        if: vars.AWS_ECR_ROLE_ARN != ''
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ECR_ROLE_ARN }}
@@ -60,7 +64,31 @@ jobs:
 
       - name: Log in to Amazon ECR
         id: ecr
+        if: vars.AWS_ECR_ROLE_ARN != ''
         uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Assemble tag list
+        id: tags
+        env:
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          VERSION: ${{ steps.version.outputs.version }}
+          MINOR: ${{ steps.version.outputs.minor }}
+          MAJOR: ${{ steps.version.outputs.major }}
+        run: |
+          {
+            echo "list<<EOF"
+            for t in "$VERSION" "$MINOR" "$MAJOR" latest; do
+              echo "ghcr.io/silverassist/${IMAGE_NAME}:${t}"
+              [ -n "$ECR_REGISTRY" ] && echo "${ECR_REGISTRY}/${IMAGE_NAME}:${t}"
+            done
+            echo "EOF"
+            echo "builder<<EOF"
+            for t in "${VERSION}-builder" "${MINOR}-builder" "${MAJOR}-builder" builder; do
+              echo "ghcr.io/silverassist/${IMAGE_NAME}:${t}"
+              [ -n "$ECR_REGISTRY" ] && echo "${ECR_REGISTRY}/${IMAGE_NAME}:${t}"
+            done
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and push (runtime)
         id: build
@@ -76,15 +104,7 @@ jobs:
             IMAGE_VERSION=${{ steps.version.outputs.version }}
             VCS_REF=${{ github.sha }}
             BUILD_DATE=${{ github.event.repository.updated_at }}
-          tags: |
-            ghcr.io/silverassist/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ghcr.io/silverassist/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.minor }}
-            ghcr.io/silverassist/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}
-            ghcr.io/silverassist/${{ env.IMAGE_NAME }}:latest
-            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.minor }}
-            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}
-            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:latest
+          tags: ${{ steps.tags.outputs.list }}
           cache-from: type=gha,scope=next-base
           cache-to: type=gha,scope=next-base,mode=max
 
@@ -102,15 +122,7 @@ jobs:
             IMAGE_VERSION=${{ steps.version.outputs.version }}
             VCS_REF=${{ github.sha }}
             BUILD_DATE=${{ github.event.repository.updated_at }}
-          tags: |
-            ghcr.io/silverassist/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-builder
-            ghcr.io/silverassist/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.minor }}-builder
-            ghcr.io/silverassist/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}-builder
-            ghcr.io/silverassist/${{ env.IMAGE_NAME }}:builder
-            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}-builder
-            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.minor }}-builder
-            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.major }}-builder
-            ${{ steps.ecr.outputs.registry }}/${{ env.IMAGE_NAME }}:builder
+          tags: ${{ steps.tags.outputs.builder }}
           cache-from: type=gha,scope=next-base-builder
           cache-to: type=gha,scope=next-base-builder,mode=max
 
@@ -121,21 +133,34 @@ jobs:
       # identity, so a consumer can verify the image was built here and not
       # pushed by hand.
       - name: Sign images
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          BUILDER_DIGEST: ${{ steps.build_builder.outputs.digest }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
-          cosign sign --yes \
-            "ghcr.io/silverassist/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
-          cosign sign --yes \
-            "${{ steps.ecr.outputs.registry }}/${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
-          cosign sign --yes \
-            "ghcr.io/silverassist/${IMAGE_NAME}@${{ steps.build_builder.outputs.digest }}"
-          cosign sign --yes \
-            "${{ steps.ecr.outputs.registry }}/${IMAGE_NAME}@${{ steps.build_builder.outputs.digest }}"
+          for d in "$DIGEST" "$BUILDER_DIGEST"; do
+            cosign sign --yes "ghcr.io/silverassist/${IMAGE_NAME}@${d}"
+            if [ -n "$ECR_REGISTRY" ]; then
+              cosign sign --yes "${ECR_REGISTRY}/${IMAGE_NAME}@${d}"
+            fi
+          done
 
       - name: Report digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+          ECR_REGISTRY: ${{ steps.ecr.outputs.registry }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          echo "### next-base ${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
-          echo '' >> "$GITHUB_STEP_SUMMARY"
-          echo 'Pin this digest in consuming Dockerfiles:' >> "$GITHUB_STEP_SUMMARY"
-          echo '```dockerfile' >> "$GITHUB_STEP_SUMMARY"
-          echo "FROM ${{ steps.ecr.outputs.registry }}/${IMAGE_NAME}:${{ steps.version.outputs.version }}@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo "### ${IMAGE_NAME} ${VERSION}"
+            echo
+            echo 'Pin this digest in consuming Dockerfiles:'
+            echo '```dockerfile'
+            if [ -n "$ECR_REGISTRY" ]; then
+              echo "FROM ${ECR_REGISTRY}/${IMAGE_NAME}:${VERSION}@${DIGEST}"
+            else
+              echo "FROM ghcr.io/silverassist/${IMAGE_NAME}:${VERSION}@${DIGEST}"
+            fi
+            echo '```'
+            [ -n "$ECR_REGISTRY" ] || echo '> ECR mirror skipped: `AWS_ECR_ROLE_ARN` is not set.'
+          } >> "$GITHUB_STEP_SUMMARY"

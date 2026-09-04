@@ -9,9 +9,18 @@ same `silverassist/*` namespace already used on Packagist.
 | `next-base` | `ghcr.io/silverassist/next-base:1` | nginx, Node 24, supervisor — the runtime stage |
 | `next-base` (builder) | `ghcr.io/silverassist/next-base:1-builder` | Node 24 + native-module toolchain — the build stage |
 
-Published to **GHCR** (canonical, public) and mirrored to **Amazon ECR** in the
-build region. Consume from ECR: it is in-region, has no pull rate limit, and
-keeps a third-party registry out of every production build's critical path.
+Published to **GHCR** (canonical, public) and, once AWS is wired up, mirrored
+to **Amazon ECR** in the build region.
+
+**The ECR mirror is optional.** Releases publish to GHCR alone until
+`AWS_ECR_ROLE_ARN` is set; because this repository is public, its GHCR images
+are public too — no authentication to pull, and no rate limit. CodeBuild can
+consume them today.
+
+Prefer ECR once it exists: it is in-region, so pulls are faster and cost no
+egress, and it keeps a third-party registry out of every production build's
+critical path. See [docs/AWS-ACCESS-REQUEST.md](docs/AWS-ACCESS-REQUEST.md) for
+what IT needs to provision.
 
 ## Why
 
@@ -133,16 +142,18 @@ a CVE — run the workflow manually with the same version number.
 
 ## Repository setup
 
-Required GitHub Actions variables:
+Nothing is required to publish to GHCR — `GITHUB_TOKEN` covers it.
+
+The ECR mirror needs two Actions **variables** (not secrets):
 
 | Variable | Purpose |
 |---|---|
 | `AWS_ECR_ROLE_ARN` | IAM role assumed via OIDC to push to ECR |
 | `AWS_REGION` | ECR region; match the CodeBuild region |
 
-The ECR repositories `wp-base` and `next-base` must
-exist, and the CodeBuild service role needs `ecr:GetDownloadUrlForLayer`,
-`ecr:BatchGetImage` and `ecr:GetAuthorizationToken` on them.
+Leave them unset and every ECR step is skipped. The full provisioning request
+for IT — roles, trust policies, permissions — is in
+[docs/AWS-ACCESS-REQUEST.md](docs/AWS-ACCESS-REQUEST.md).
 
 ## Local development
 
