@@ -13,9 +13,13 @@ Published to **GHCR** (canonical, public) and, once AWS is wired up, mirrored
 to **Amazon ECR** in the build region.
 
 **The ECR mirror is optional.** Releases publish to GHCR alone until
-`AWS_ECR_ROLE_ARN` is set; because this repository is public, its GHCR images
-are public too — no authentication to pull, and no rate limit. CodeBuild can
-consume them today.
+`AWS_ECR_ROLE_ARN` is set, and a public GHCR image needs no authentication to
+pull and has no rate limit — so CodeBuild can consume it today.
+
+**A GHCR package does not inherit the repository's visibility.** Packages are
+created private even in a public repository, and an anonymous pull returns
+`401 Unauthorized` until an org owner changes it. This is a one-time step per
+package; see "First-time GHCR setup" below.
 
 Prefer ECR once it exists: it is in-region, so pulls are faster and cost no
 egress, and it keeps a third-party registry out of every production build's
@@ -143,6 +147,29 @@ a CVE — run the workflow manually with the same version number.
 ## Repository setup
 
 Nothing is required to publish to GHCR — `GITHUB_TOKEN` covers it.
+
+### First-time GHCR setup
+
+After the first release of each image, an org owner must make its package
+public — once per package, not per release:
+
+1. <https://github.com/orgs/SilverAssist/packages> → select the package
+2. **Package settings** → **Danger Zone** → **Change visibility** → **Public**
+
+While it is still private, consumers must authenticate:
+
+```bash
+echo "$GITHUB_TOKEN" | docker login ghcr.io -u <user> --password-stdin
+```
+
+Confirm it worked from an unauthenticated client:
+
+```bash
+docker buildx imagetools inspect ghcr.io/silverassist/wp-base:1.0.0
+```
+
+Also link each package to this repository (Package settings → **Connect
+repository**) so it inherits the README and appears on the repo page.
 
 The ECR mirror needs two Actions **variables** (not secrets):
 
