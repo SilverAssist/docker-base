@@ -1,0 +1,6 @@
+ignored:
+  # Pinning apk package versions would defeat the security-rebuild mechanism:
+  # re-running a release against current Alpine packages is how a CVE is picked
+  # up without a source change (see docs/VERSIONING.md). Reproducibility comes
+  # from the base image digest instead, which pins the whole package set.
+  - DL3018

@@ -1,0 +1,34 @@
+#!/bin/sh
+# composer-install — `composer install` that survives a flaky registry.
+#
+# Composer resolves GitHub dist archives through api.github.com, which returns
+# intermittent 5xx to unauthenticated callers sharing an egress IP (every CI
+# runner). Composer 2.10 additionally disabled the automatic source fallback
+# that used to paper over this, so one bad response now aborts the build.
+#
+# Retries the whole install with linear backoff. Any argument is forwarded to
+# composer, so callers write:
+#
+#   RUN composer-install --no-dev --optimize-autoloader
+#
+# Set COMPOSER_INSTALL_ATTEMPTS to change the retry count (default 3).
+set -eu
+
+attempts="${COMPOSER_INSTALL_ATTEMPTS:-3}"
+attempt=1
+
+while :; do
+    if composer install --no-interaction --no-progress "$@"; then
+        exit 0
+    fi
+
+    if [ "$attempt" -ge "$attempts" ]; then
+        echo "composer-install: failed after ${attempts} attempt(s)" >&2
+        exit 1
+    fi
+
+    delay=$((attempt * 15))
+    echo "composer-install: attempt ${attempt}/${attempts} failed, retrying in ${delay}s" >&2
+    sleep "$delay"
+    attempt=$((attempt + 1))
+done
