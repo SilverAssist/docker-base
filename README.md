@@ -117,6 +117,8 @@ COPY . .
 RUN npm run build && rm -rf .next/cache
 
 FROM <account>.dkr.ecr.us-east-1.amazonaws.com/next-base:1.0.0
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=$GIT_COMMIT
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY docker/conf/mysite.conf /etc/nginx/conf.d/mysite.conf
@@ -128,6 +130,29 @@ longer copies `/usr/lib`, `/usr/local/bin` and `/usr/local/include` out of the
 builder into an nginx image. That copy moved an unversioned set of shared
 objects between two independently-updated bases; the node runtime here is the
 one that was actually installed.
+
+### Exposing the deployed commit
+
+`next-base` declares `ARG GIT_COMMIT=unknown` in its runtime stage so a plain
+`FROM next-base:1.0.0` doesn't leave `GIT_COMMIT` unset, but that default only
+covers next-base's own build — `ARG` values don't propagate through a
+downstream `FROM`, so it never carries a site's actual commit. Every
+consuming Dockerfile re-declares the two lines above, and its CodeBuild
+buildspec passes the real value:
+
+```bash
+docker build --build-arg GIT_COMMIT=$CODEBUILD_RESOLVED_SOURCE_VERSION ...
+```
+
+Read it back over HTTP with the `/api/deploy-info` route shipped in
+`@silverassist/nextjs-core/environment` — this is how a developer without AWS
+access checks which commit is live in an environment. Wiring it in a site
+only takes two lines (`src/app/api/deploy-info/route.ts`):
+
+```typescript
+export { GET } from "@silverassist/nextjs-core/environment";
+export const dynamic = "force-dynamic";
+```
 
 ## Releasing
 

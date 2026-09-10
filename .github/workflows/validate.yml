@@ -55,7 +55,12 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.image }}-pr,mode=max
 
       - name: Scan for vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        # v0.36.0 pinned by commit. The bare "0.28.0" tag this used to read
+        # never existed at all (upstream only tags "v0.28.0"), and that
+        # version, once corrected, turned out broken anyway: its own
+        # action.yaml pins aquasecurity/setup-trivy@v0.2.1, a tag upstream
+        # has since deleted. v0.36.0 pins setup-trivy@v0.2.6, which exists.
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ matrix.image }}:pr
           format: sarif

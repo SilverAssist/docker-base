@@ -54,6 +54,12 @@ ARG IMAGE_VERSION=dev
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 
+# Per-site commit, not this repo's — a consuming Dockerfile re-declares this
+# ARG and passes its own --build-arg GIT_COMMIT at build time (see the
+# "Using next-base" section of the top-level README). "unknown" here is only
+# the fallback baked into next-base's own build, for a site that skips it.
+ARG GIT_COMMIT=unknown
+
 LABEL org.opencontainers.image.title="silverassist/next-base" \
       org.opencontainers.image.description="nginx + Node 24 + supervisor runtime for SilverAssist Next.js sites" \
       org.opencontainers.image.vendor="SilverAssist" \
@@ -76,7 +82,8 @@ RUN apk add --no-cache \
 # to disable here — the project drops its own into /etc/nginx/conf.d/.
 
 ENV NODE_ENV=production \
-    NEXT_TELEMETRY_DISABLED=1
+    NEXT_TELEMETRY_DISABLED=1 \
+    GIT_COMMIT=${GIT_COMMIT}
 
 WORKDIR /app
 EXPOSE 80 3000
