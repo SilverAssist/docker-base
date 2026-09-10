@@ -55,7 +55,10 @@ jobs:
           cache-to: type=gha,scope=${{ matrix.image }}-pr,mode=max
 
       - name: Scan for vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        # v0.28.0 pinned by commit -- the bare "0.28.0" tag this used to read
+        # never existed (upstream only tags "v0.28.0"), so every run of this
+        # job failed at the setup step before touching Docker at all.
+        uses: aquasecurity/trivy-action@915b19bbe73b92a6cf82a1bc12b087c9a19a5fe2 # v0.28.0
         with:
           image-ref: ${{ matrix.image }}:pr
           format: sarif

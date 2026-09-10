@@ -4,3 +4,9 @@ ignored:
   # up without a source change (see docs/VERSIONING.md). Reproducibility comes
   # from the base image digest instead, which pins the whole package set.
   - DL3018
+  # next-base's FROM ${NODE_IMAGE} can't be statically resolved by hadolint,
+  # but NODE_IMAGE's own default is a fully version+digest-pinned tag
+  # (node:24.20.0-alpine3.24@sha256:...) declared right above it — this is
+  # the same reproducibility guarantee DL3006 asks for, just one level of
+  # indirection away.
+  - DL3006
