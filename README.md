@@ -111,8 +111,9 @@ registry `504` a slow build rather than a failed one.
 ```dockerfile
 FROM <account>.dkr.ecr.us-east-1.amazonaws.com/next-base:1.0.0-builder AS builder
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+COPY package.json package-lock.json .npmrc ./
+RUN --mount=type=secret,id=npm_github_token \
+    NPM_GITHUB_TOKEN="$(cat /run/secrets/npm_github_token)" npm ci --omit=dev
 COPY . .
 RUN npm run build && rm -rf .next/cache
 
@@ -130,6 +131,45 @@ longer copies `/usr/lib`, `/usr/local/bin` and `/usr/local/include` out of the
 builder into an nginx image. That copy moved an unversioned set of shared
 objects between two independently-updated bases; the node runtime here is the
 one that was actually installed.
+
+### Installing `@silverassist/*` packages (GitHub Packages, private)
+
+Any site that depends on `@silverassist/nextjs-core` or another private
+`@silverassist/*` package needs a `.npmrc` scoping that namespace to GitHub
+Packages:
+
+```ini
+# .npmrc — commit this; it reads the token from the environment
+@silverassist:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${NPM_GITHUB_TOKEN}
+```
+
+A bare `npm ci` in the builder stage above **will 401** without it — the build
+context has no `.npmrc` and no token by default, unlike a developer's local
+shell (which usually has `NPM_GITHUB_TOKEN` exported already, masking the gap
+until the first CI/CodeBuild build). Do not pass the token as an `ARG`/`ENV`:
+that bakes it into the image's layer history permanently, readable by anyone
+with pull access to the image. The `RUN --mount=type=secret` form in the
+example above reads it only for that one command and it never touches a
+layer.
+
+Wire it into the build invocation with `--secret id=npm_github_token,env=VAR`,
+naming whichever environment variable the pipeline already has the token in:
+
+```bash
+# CodeBuild / local — the token must already be in the environment as $NPM_GITHUB_TOKEN
+docker build --secret id=npm_github_token,env=NPM_GITHUB_TOKEN -t "$IMAGE" .
+```
+
+Confirmed against `senioradvice-nextjs` and `nextjs-boilerplate` (2026-09-11):
+both project Dockerfiles previously copied only `package.json`/
+`package-lock.json` and ran a bare `npm ci`, exactly as this README's own
+example did — every site that followed it verbatim would 401 the moment it
+tried to install `@silverassist/nextjs-core`. Local builds happened to work
+only because the developer's shell already had `NPM_GITHUB_TOKEN` exported;
+neither site's actual CI pipeline has the `--secret` wiring yet — see
+`nextjs-boilerplate/docs/NEXTJS_CORE_PACKAGE_PLAN.md`'s "Docker/CodeBuild
+registry auth" for that remaining half.
 
 ### Exposing the deployed commit
 
